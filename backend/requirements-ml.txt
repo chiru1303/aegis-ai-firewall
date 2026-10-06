@@ -1,0 +1,11 @@
+# Optional model inference and offline training. Audit this environment separately.
+-r requirements.txt
+lightgbm>=4.1,<5
+onnxruntime>=1.16,<2
+transformers>=4.36,<6
+tokenizers>=0.15,<1
+torch>=2.1,<3
+scikit-learn>=1.3,<2
+joblib>=1.3,<2
+laya>=0.3.27,<0.4
+truststore>=0.10,<1

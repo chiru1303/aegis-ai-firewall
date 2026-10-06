@@ -1,0 +1,48 @@
+# Credentials, environment files, and local state
+.env
+.env.*
+!.env.example
+!backend/.env.example
+.aegis-local-api-key
+*.pem
+*.key
+*.db
+*.sqlite
+*.sqlite3
+
+# Python
+.venv/
+.venv*/
+venv/
+ENV/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# JavaScript build/runtime artifacts
+node_modules/
+frontend/dist/
+dist/
+.npm/
+npm-debug.log*
+
+# Downloaded ML model weights and caches (optional; fetched by installer)
+backend/models/**
+!backend/models/README.md
+!.gitkeep
+**/.cache/
+
+# Editors and operating-system files
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Local evaluation output / generated reports
+reports/
+eval/
+evaluation/

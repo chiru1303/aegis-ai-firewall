@@ -1,0 +1,24 @@
+# Overlay: docker compose -f docker-compose.yml -f docker-compose.production.yml up --build
+# Resolve and supply immutable official image references such as name@sha256:... .
+services:
+  backend:
+    build:
+      args:
+        PYTHON_IMAGE: ${PYTHON_IMAGE:?Supply an immutable Python image reference}
+    environment:
+      ENVIRONMENT: production
+      COOKIE_SECURE: "true"
+      CORS_ORIGINS: ${CORS_ORIGINS:?Set the public HTTPS browser origin list}
+      DASHBOARD_USERNAME: ${DASHBOARD_USERNAME:-admin}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:?Set a unique 12+ character dashboard password}
+  frontend:
+    build:
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:?Supply an immutable Node image reference}
+        NGINX_IMAGE: ${NGINX_IMAGE:?Supply an immutable Nginx image reference}
+  postgres:
+    image: ${POSTGRES_IMAGE:?Supply an immutable PostgreSQL image reference}
+  redis:
+    image: ${REDIS_IMAGE:?Supply an immutable Redis image reference}
+  nginx:
+    image: ${NGINX_IMAGE:?Supply an immutable Nginx image reference}
