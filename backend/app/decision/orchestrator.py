@@ -161,6 +161,28 @@ class ParallelDecisionOrchestrator:
                 if r.status == DetectorStatus.FAILED:
                     detector_failures.append(r.detector_id)
 
+            # Clear an isolated ML alarm only when the independent Tier 2 review
+            # confidently finds no injection and no deterministic rule matched.
+            # Keep the adjudication in metadata for audit, but do not let a lone
+            # model vote inflate risk or appear as a confirmed attack.
+            tier2_successes = [r for r in escalated_results if r.status == DetectorStatus.SUCCESS]
+            tier2_clear = bool(tier2_successes) and all(
+                not r.is_malicious and r.detector_confidence >= 0.80 for r in tier2_successes
+            )
+            deterministic_findings = [r for r in t0_results if r.is_malicious]
+            learned_findings = [r for r in t1_results if r.is_malicious]
+            if tier2_clear and not deterministic_findings and len(learned_findings) == 1:
+                lone_finding = learned_findings[0]
+                lone_finding.metadata = {
+                    **lone_finding.metadata,
+                    "initial_model_verdict": "suspicious",
+                    "adjudication": "not_confirmed_by_independent_review",
+                }
+                lone_finding.is_malicious = False
+                lone_finding.risk_score = 0.0
+                lone_finding.attack_types = []
+                lone_finding.evidence_snippets = []
+
         # 7. Final Evidence Fusion
         final_risk_score, attack_types_list, component_scores = (
             self.evidence_fusion.fuse_evidence(

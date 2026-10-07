@@ -20,9 +20,9 @@ set "TRAIN_STATUS=%ERRORLEVEL%"
 popd
 if not "%TRAIN_STATUS%"=="0" goto :fail
 echo.
-echo [OK] DeBERTa, Wolf Defender, and Laya model files are installed.
+echo [OK] DeBERTa, Wolf Defender, Laya, and Open-Jev model files are installed.
 echo [INFO] LightGBM uses the included local model file when available.
-echo [INFO] Open-Jev requires its separate service. Configure OPEN_JEV_URL in backend\.env.
+echo [INFO] Open-Jev loads locally from backend\models\open_jev and runs for ambiguous escalations.
 echo Restart the Aegis backend to load the models.
 pause
 exit /b 0

@@ -439,6 +439,24 @@ async def run_detection_pipeline(
     # CORRECTION 7 & 8: Durable Audit Outbox write committed synchronously before returning response
     if db:
         try:
+            if ingestion_review_reasons:
+                decision_explanation = "Review required because content extraction was incomplete: " + "; ".join(ingestion_review_reasons)
+            elif orchestrated.gate_outcome == "DEGRADED_FAILSAFE_BLOCK":
+                decision_explanation = "Blocked by the detector failsafe because a required inspection step was unavailable."
+            elif orchestrated.gate_outcome == "ESCALATED_BLOCK":
+                decision_explanation = f"Blocked because the combined detector risk score reached {float(orchestrated.risk_score) * 100:.0f}%, above the 75% automatic-block threshold."
+            elif orchestrated.gate_outcome == "FAST_BLOCK":
+                decision_explanation = "Blocked because a high-confidence mandatory security rule matched."
+            elif orchestrated.gate_outcome == "SESSION_QUARANTINE":
+                decision_explanation = "This session was quarantined after cumulative risk crossed its safety limit."
+            elif decision == Decision.REQUIRE_REVIEW and orchestrated.decision == "SANITIZE":
+                decision_explanation = "Review required because the proposed sanitized content did not pass the follow-up security scan."
+            elif decision == Decision.REQUIRE_REVIEW:
+                decision_explanation = f"Review required because the assessed risk score is {float(orchestrated.risk_score) * 100:.0f}% and the active gate requires review."
+            elif decision == Decision.SANITIZE:
+                decision_explanation = "Content was sanitized under the active policy."
+            else:
+                decision_explanation = policy_decision.explanation
             await audit_engine.log_decision(
                 request_id=request_id,
                 content=content,
@@ -452,6 +470,19 @@ async def run_detection_pipeline(
                 detector_results=[r.model_dump() for r in orchestrated.detector_results],
                 policy_name=policy_decision.policy_name,
                 policy_rules_applied=list(policy_decision.applied_rules) + (["incomplete_multimodal_extraction"] if ingestion_review_reasons else []),
+                decision_rationale={
+                    "decision": decision.value,
+                    "decision_explanation": decision_explanation,
+                    "gate_outcome": str(orchestrated.gate_outcome),
+                    "policy_explanation": policy_decision.explanation,
+                    "mandatory_block_reason": policy_decision.mandatory_block_reason,
+                    "policy_rules_applied": list(policy_decision.applied_rules) + (["incomplete_multimodal_extraction"] if ingestion_review_reasons else []),
+                    "attack_types": [str(at.type.value if hasattr(at, "type") else at) for at in attack_detections],
+                    "risk_score": float(orchestrated.risk_score),
+                    "risk_level": str(orchestrated.risk_level),
+                    "ingestion_review_reasons": list(ingestion_review_reasons),
+                    "severity_method": "Risk score is normalized from 0 to 1: LOW <0.20, MEDIUM 0.20–0.49, HIGH 0.50–0.79, CRITICAL >=0.80. The decision may also be affected by mandatory policy rules, failsafe state, or review requirements.",
+                },
                 latency_ms=latency_ms,
                 provenance={"trust_level": trust_level, "content_id": prov_info.content_id},
                 tenant_id=tenant_id,
@@ -962,7 +993,11 @@ async def health():
         "wolf_defender": "loaded · every scan" if ensemble_classifier.wolf.is_loaded else "not loaded · Tier 0 fallback",
         "deberta": "loaded · every scan" if ensemble_classifier.deberta.is_loaded else "not loaded · Tier 0 fallback",
         "laya": "loaded · escalation" if ensemble_classifier.laya.is_loaded else "not loaded · deterministic fallback",
-        "open_jev": "connected · escalation" if ensemble_classifier.open_jev.is_loaded else "service not configured · evidence fallback",
+        "open_jev": (
+            "loaded · local model · escalation only"
+            if ensemble_classifier.open_jev.is_loaded
+            else f"not loaded · evidence fallback · {ensemble_classifier.open_jev.load_error or 'model not initialized'}"
+        ),
         "lightgbm": "loaded · every scan" if ensemble_classifier.lgb.is_loaded else "heuristic · every scan",
         "tier0_detectors": f"{len(detector_registry.get_tier(0))} loaded · every scan",
     }
@@ -1106,6 +1141,8 @@ async def metrics(
                 "risk_score": r.risk_score,
                 "latency_ms": r.latency_ms,
                 "evidence": r.evidence_json or [],
+                "decision_rationale": r.evidence_json.get("decision_rationale", {}) if isinstance(r.evidence_json, dict) else {},
+                "policy_rules_applied": r.evidence_json.get("policy_rules_applied", []) if isinstance(r.evidence_json, dict) else [],
                 "policy": r.policy,
             }
             for r in recent
@@ -1387,36 +1424,32 @@ async def get_audit_by_id(
         raw_hash_val = getattr(r, "raw_prompt_hash", None) or (ev_data.get("raw_prompt_hash") if isinstance(ev_data, dict) else (r.hash_chain or ""))
         has_pii_val = bool(isinstance(ev_data, dict) and ev_data.get("has_pii"))
         pii_types_val = ev_data.get("pii_types", []) if isinstance(ev_data, dict) else []
+        decision_rationale = ev_data.get("decision_rationale", {}) if isinstance(ev_data, dict) else {}
 
         detected_attacks = []
         if isinstance(ev_data, dict):
-            for at in (ev_data.get("attack_types") or []):
-                if isinstance(at, dict):
-                    at_conf = float(at.get("confidence", risk_val if risk_val > 0 else 0.95))
-                    detected_attacks.append({
-                        "attackType": at.get("type") or at.get("attack_type", "INSTRUCTION_OVERRIDE"),
-                        "confidence": at_conf,
-                        "evidence": [{"detectorName": "AegisCore", "signal": f"Confidence: {at_conf:.4f}"}]
-                    })
-                elif isinstance(at, str):
-                    detected_attacks.append({
-                        "attackType": at,
-                        "confidence": risk_val if risk_val > 0 else 0.95,
-                        "evidence": [{"detectorName": "AegisCore", "signal": at}]
-                    })
             for det in (ev_data.get("detector_results") or []):
-                if isinstance(det, dict) and (det.get("is_malicious") or det.get("detected")):
-                    at_names = det.get("attack_types", ["INSTRUCTION_OVERRIDE"])
-                    at_primary = at_names[0] if at_names else "INSTRUCTION_OVERRIDE"
-                    det_conf = float(det.get("detector_confidence", det.get("risk_score", risk_val)))
-                    raw_snippets = det.get("evidence_snippets", det.get("matched_signals", []))
-                    clean_snippets = [s for s in raw_snippets if "benign" not in str(s).lower() and "safe" not in str(s).lower()]
-                    if clean_snippets or det_conf >= 0.5:
-                        detected_attacks.append({
-                            "attackType": at_primary,
-                            "confidence": det_conf,
-                            "evidence": [{"detectorName": det.get("detector_id", det.get("detector_name", "RuleEngine")), "signal": " | ".join(clean_snippets) if clean_snippets else f"Score: {det_conf:.4f}"}]
-                        })
+                if not isinstance(det, dict) or not (det.get("is_malicious") or det.get("detected")):
+                    continue
+                at_names = det.get("attack_types") or []
+                det_conf = det.get("detector_confidence", det.get("confidence"))
+                raw_snippets = det.get("evidence_snippets", det.get("matched_signals", []))
+                clean_snippets = [str(s)[:240] for s in raw_snippets if "benign" not in str(s).lower() and "safe" not in str(s).lower()]
+                for attack_name in at_names:
+                    detected_attacks.append({
+                        "attackType": attack_name,
+                        "confidence": float(det_conf) if det_conf is not None else None,
+                        "detectorName": det.get("detector_id", "Security detector"),
+                        "evidence": clean_snippets,
+                    })
+
+            # Older audit entries may only have the aggregate categories. Do not
+            # invent per-detector confidence or synthetic evidence for those rows.
+            known_types = {str(item["attackType"]).upper().replace(" ", "_") for item in detected_attacks}
+            for at in (ev_data.get("attack_types") or []):
+                at_name = (at.get("type") or at.get("attack_type", "UNKNOWN")) if isinstance(at, dict) else str(at)
+                if str(at_name).upper().replace(" ", "_") not in known_types:
+                    detected_attacks.append({"attackType": at_name, "confidence": None, "detectorName": None, "evidence": []})
         elif isinstance(ev_data, list):
             for ev in ev_data:
                 if isinstance(ev, dict):
@@ -1432,12 +1465,19 @@ async def get_audit_by_id(
                         "evidence": [{"detectorName": "RuleEngine", "signal": str(ev)}]
                     })
 
-        # Deduplicate detected attacks by attackType keeping highest confidence
+        # Deduplicate detector results by attack type; prefer real evidence/confidence.
         unique_attacks = {}
         for item in detected_attacks:
             atype = item.get("attackType", "UNKNOWN").upper().replace(" ", "_")
-            if atype not in unique_attacks or item.get("confidence", 0) > unique_attacks[atype].get("confidence", 0):
+            existing = unique_attacks.get(atype)
+            item_score = float(item.get("confidence") or 0) + (0.01 if item.get("evidence") else 0)
+            existing_score = (float(existing.get("confidence") or 0) + (0.01 if existing.get("evidence") else 0)) if existing else -1
+            if existing is None:
                 unique_attacks[atype] = item
+            else:
+                existing["evidence"] = list(dict.fromkeys(existing.get("evidence", []) + item.get("evidence", [])))[:5]
+                if item_score > existing_score:
+                    unique_attacks[atype].update({k: v for k, v in item.items() if k != "evidence"})
         detected_attacks = list(unique_attacks.values())
 
         return {
@@ -1456,6 +1496,8 @@ async def get_audit_by_id(
             "has_pii": has_pii_val,
             "pii_types": pii_types_val,
             "evidence": r.evidence_json or [],
+            "decision_rationale": decision_rationale,
+            "policy_rules_applied": ev_data.get("policy_rules_applied", []) if isinstance(ev_data, dict) else [],
             "policy": r.policy or "default_zero_trust",
             "latency_ms": r.latency_ms or 0.0,
             "source_type": r.source_type or "user",
@@ -1471,6 +1513,9 @@ async def get_audit_by_id(
                 "hasPii": has_pii_val,
                 "piiTypes": pii_types_val,
                 "detectedAttacks": detected_attacks,
+                "decisionRationale": decision_rationale,
+                "decision_rationale": decision_rationale,
+                "policyRulesApplied": ev_data.get("policy_rules_applied", []) if isinstance(ev_data, dict) else [],
                 "policy": r.policy or "default_zero_trust",
                 "latency_ms": r.latency_ms or 0.0,
                 "provenance": {

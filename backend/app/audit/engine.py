@@ -121,6 +121,7 @@ class AuditEngine:
         gateway_overhead_ms: Optional[float] = None,
         upstream_llm_ms: Optional[float] = None,
         total_ms: Optional[float] = None,
+        decision_rationale: Optional[Dict[str, Any]] = None,
     ) -> AuditEntry:
         """
         Record decision synchronously into durable DB transaction + outbox before response.
@@ -247,6 +248,7 @@ class AuditEngine:
                         "prompt": masked_prompt,
                         "raw_prompt_hash": raw_prompt_hash,
                         "policy_rules_applied": scrub(policy_rules_applied),
+                        "decision_rationale": scrub(decision_rationale or {}),
                         "provenance": provenance,
                         "tool_decision": scrub(tool_decision),
                         "sanitization": scrub(sanitization),

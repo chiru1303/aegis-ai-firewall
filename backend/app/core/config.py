@@ -43,7 +43,6 @@ class Settings(BaseSettings):
     LAYA_MODEL_PATH: Optional[str] = str(MODEL_DIR / "laya" / "multilingual")
     LAYA_ENGLISH_MODEL_PATH: Optional[str] = str(MODEL_DIR / "laya" / "english")
     OPEN_JEV_MODEL_PATH: Optional[str] = str(MODEL_DIR / "open_jev")
-    OPEN_JEV_URL: Optional[str] = None
     LIGHTGBM_MODEL_PATH: Optional[str] = str(MODEL_DIR / "lightgbm" / "model.txt")
 
     RISK_LOW_THRESHOLD: float = 0.19

@@ -1,0 +1,6 @@
+Open-Jev typed-decision inference components (open_jev.py, encoder.py, schema.py)
+are adapted from kotoba-lang/typed-decisions:
+https://github.com/kotoba-lang/typed-decisions
+
+Copyright 2026 kotoba-lang contributors. Licensed under the Apache License,
+Version 2.0. See LICENSE in this directory.

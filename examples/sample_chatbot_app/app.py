@@ -17,7 +17,7 @@ import gradio as gr
 
 # Configuration Defaults
 AEGIS_GATEWAY_URL = os.getenv("AEGIS_GATEWAY_URL", "http://localhost:8000/v1")
-AEGIS_API_KEY = os.getenv("AEGIS_API_KEY", "")
+AEGIS_API_KEY = os.getenv("AEGIS_API_KEY", "secret-key-change-me")
 OLLAMA_DIRECT_URL = os.getenv("OLLAMA_DIRECT_URL", "http://localhost:11434")
 
 # Fetch available Ollama models dynamically
@@ -77,13 +77,6 @@ def chat_response(message, history, mode, model_name, system_prompt):
     # OPTION A: PROTECTED VIA AEGIS AI FIREWALL GATEWAY
     # =========================================================================
     if "Protected" in mode:
-        if not AEGIS_API_KEY:
-            missing_key_history = list(history or [])
-            missing_key_history.extend([
-                {"role": "user", "content": message},
-                {"role": "assistant", "content": "Set AEGIS_API_KEY to the key shown on Aegis → Connect an app before using protected mode."},
-            ])
-            return missing_key_history, "", "Protected mode needs an Aegis API key."
         try:
             req_body = {
                 "model": model_name,

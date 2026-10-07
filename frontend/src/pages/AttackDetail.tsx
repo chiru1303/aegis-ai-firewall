@@ -1,16 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import {
-  ArrowLeft, Target, Shield, List, AlertTriangle,
-  Copy, Check, FileText, CheckCircle2, ShieldBan,
-  Clock, Lock, EyeOff, Sparkles
-} from 'lucide-react';
+import { ArrowLeft, Target, AlertTriangle, Copy, Check } from 'lucide-react';
 import { apiService } from '../services/api';
 import { AuditRecord, RiskLevel, Decision } from '../types';
-import RiskBadge from '../components/RiskBadge';
 import DecisionBadge from '../components/DecisionBadge';
-import RiskGauge from '../components/RiskGauge';
-import AttackTypeBadge from '../components/AttackTypeBadge';
 import { formatIST } from '../utils/date';
 import SyntaxHighlighter from '../components/CodeText';
 const vscDarkPlus = {};
@@ -22,7 +15,6 @@ export default function AttackDetail() {
   const [data, setData] = useState<AuditRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [copiedRecord, setCopiedRecord] = useState(false);
-  const [copiedPrompt, setCopiedPrompt] = useState(false);
 
   useEffect(() => {
     const fetchDetails = async () => {
@@ -45,13 +37,6 @@ export default function AttackDetail() {
     setCopiedRecord(true);
     toast.success('Log details copied to clipboard');
     setTimeout(() => setCopiedRecord(false), 2000);
-  };
-
-  const copyPromptText = (promptStr: string) => {
-    navigator.clipboard.writeText(promptStr);
-    setCopiedPrompt(true);
-    toast.success('Prompt copied to clipboard');
-    setTimeout(() => setCopiedPrompt(false), 2000);
   };
 
   if (loading) {
@@ -99,10 +84,47 @@ export default function AttackDetail() {
   const promptHash = data.raw_prompt_hash || data.details?.rawPromptHash || data.details?.provenance?.hash || '';
   const hasPii = Boolean(data.has_pii || data.details?.hasPii);
   const piiTypes: string[] = data.pii_types || data.details?.piiTypes || [];
-
   const decisionUpper = String(data.decision || 'ALLOW').toUpperCase();
   const isBlocked = decisionUpper === 'BLOCK';
   const isSanitized = decisionUpper === 'SANITIZE';
+  const decisionRationale = data.decision_rationale || data.details?.decisionRationale || data.details?.decision_rationale || {};
+  const detectedAttacks = data.details?.detectedAttacks || [];
+  const attackDescriptions: Record<string, string> = {
+    INSTRUCTION_OVERRIDE: 'the text tells the AI to ignore its original instructions',
+    ROLE_CHANGE: 'the text tries to change the AI\'s role or authority',
+    SECRET_EXTRACTION: 'the text asks the AI to reveal protected information',
+    TOOL_ABUSE: 'the text asks the AI to use a tool for an unauthorized action',
+    CREDENTIAL_THEFT: 'the text tries to obtain passwords, API keys, or other login details',
+    CONTEXT_POISONING: 'the text places misleading instructions in supplied content',
+    MULTI_STEP_JAILBREAK: 'the text uses a sequence of requests to bypass safety rules',
+    ENCODED_INSTRUCTION: 'the text contains instructions hidden in encoded text',
+    INDIRECT_PROMPT_INJECTION: 'the text hides instructions in external or retrieved content',
+  };
+  const attackTypes = [...new Set([
+    ...detectedAttacks.map((attack: any) => String(attack.attackType || '').toUpperCase()),
+    ...(decisionRationale.attack_types || []).map((attack: any) => String(typeof attack === 'string' ? attack : attack.type || attack.attack_type || '').toUpperCase()),
+  ].filter(Boolean))];
+  const findingExplanation = attackTypes.map((type) => attackDescriptions[type] || `the text contains ${type.toLowerCase().replace(/_/g, ' ')}`).join('; ');
+  const riskImpact = attackTypes.some((type) => ['SECRET_EXTRACTION', 'CREDENTIAL_THEFT'].includes(type))
+    ? 'This could expose private information or login details.'
+    : (attackTypes.includes('TOOL_ABUSE')
+      ? 'This could trigger an action you did not approve.'
+      : 'This could make the AI follow these instructions instead of yours.');
+  const decisionReason = attackTypes.length > 0
+    ? (isBlocked
+      ? `Blocked because ${findingExplanation}. ${riskImpact}`
+      : (isSanitized
+        ? `Aegis sanitized the content because ${findingExplanation}.`
+        : `The scan found that ${findingExplanation}, but the safety settings allowed it.`))
+    : (isBlocked
+      ? (decisionRationale.gate_outcome === 'DEGRADED_FAILSAFE_BLOCK'
+        ? 'Blocked because a required security check could not finish. The content was held back until it can be checked safely.'
+        : (decisionRationale.mandatory_block_reason
+          ? 'Blocked because the content matched a required safety rule.'
+          : `Blocked because the safety scan rated this content ${normalizedScore}/100 risk.`))
+      : (decisionUpper === 'REQUIRE_REVIEW'
+        ? 'Held for review because the content could not be cleared safely.'
+        : 'No specific unsafe instruction was found, so the request was allowed.'));
 
   return (
     <div className="space-y-6">
@@ -127,277 +149,85 @@ export default function AttackDetail() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column: Triage & Provenance */}
-        <div className="space-y-5">
-          {/* Outcome Card */}
-          <div className="bg-[#111827] border border-[#263247] rounded-lg p-4">
-            <h2 className="text-xs font-mono font-bold uppercase tracking-wider text-[#8F9BAD] mb-4 pb-2 border-b border-[#263247]">
-              Security Assessment
-            </h2>
-
-            <div className="flex flex-col items-center justify-center py-2 mb-4">
-              <RiskGauge score={normalizedScore} level={effectiveRiskLevel} size={150} />
-            </div>
-
-            <div className="space-y-3 text-xs font-mono pt-3 border-t border-[#1D2738]">
-              <div className="flex justify-between items-center">
-                <span className="text-[#8F9BAD]">Gate Decision:</span>
-                <DecisionBadge decision={data.decision as Decision} />
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-[#8F9BAD]">Severity:</span>
-                <RiskBadge level={effectiveRiskLevel} />
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-[#8F9BAD]">Policy Scope:</span>
-                <span className="text-[#F4F7FB] font-semibold">{data.policy || data.details?.policy || 'default_zero_trust'}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-[#8F9BAD]">PII Protection:</span>
-                {hasPii ? (
-                  <span className="px-2 py-0.5 rounded text-[10px] bg-[rgba(233,180,76,0.15)] text-[#E9B44C] border border-[rgba(233,180,76,0.3)]">
-                    Masked ({piiTypes.length} Types)
-                  </span>
-                ) : (
-                  <span className="text-[#35C98A] text-[11px]">No PII Detected</span>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Provenance Metadata */}
-          <div className="bg-[#111827] border border-[#263247] rounded-lg p-4">
-            <h2 className="text-xs font-mono font-bold uppercase tracking-wider text-[#8F9BAD] mb-3 pb-2 border-b border-[#263247]">
-              Source Information
-            </h2>
-
-            <ul className="space-y-2.5 text-xs font-mono">
-              <li className="flex justify-between">
-                <span className="text-[#8F9BAD]">Origin:</span>
-                <span className="text-[#F4F7FB]">{data.origin || data.details?.provenance?.origin || 'client:app_default'}</span>
-              </li>
-              <li className="flex justify-between">
-                <span className="text-[#8F9BAD]">Source Channel:</span>
-                <span className="uppercase text-[#35C98A]">{data.source_type || data.details?.provenance?.sourceType || 'CHAT_COMPLETIONS'}</span>
-              </li>
-              <li className="flex justify-between">
-                <span className="text-[#8F9BAD]">Server Trust:</span>
-                <span className="text-[#E9B44C]">{data.details?.provenance?.trustLevel || 'UNTRUSTED'}</span>
-              </li>
-              <li className="flex justify-between">
-                <span className="text-[#8F9BAD]">Session Trace:</span>
-                <span className="text-[#4F8CFF]">{data.details?.sessionId || 'gateway-session'}</span>
-              </li>
-            </ul>
-
-            {promptHash && (
-              <div className="mt-3 pt-3 border-t border-[#1D2738]">
-                <span className="text-[10px] text-[#8F9BAD] block uppercase mb-1">Payload SHA-256 Hash</span>
-                <span className="text-[10px] font-mono text-[#C0C8D6] break-all bg-[#0E1526] p-1.5 rounded border border-[#1D2738] block">
-                  {promptHash}
-                </span>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Middle/Right Column: Forensic Timeline, Prompt Payload, & Evidence */}
-        <div className="lg:col-span-2 space-y-5">
-          {/* Decision Pipeline Execution Timeline */}
-          <div className="bg-[#111827] border border-[#263247] rounded-lg p-4">
-            <h2 className="text-xs font-mono font-bold uppercase tracking-wider text-[#8F9BAD] mb-4 pb-2 border-b border-[#263247] flex items-center gap-2">
-              <Clock size={14} className="text-[#4F8CFF]" />
-              <span>Inspection Steps</span>
-            </h2>
-
-            <div className="space-y-3 font-mono text-xs">
-              <div className="flex items-start gap-3">
-                <div className="w-5 h-5 rounded-full bg-[rgba(53,201,138,0.15)] text-[#35C98A] flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">
-                  1
-                </div>
-                <div>
-                  <span className="font-semibold text-[#F4F7FB] block">Text Normalization</span>
-                  <span className="text-[#8F9BAD] text-[11px]">Normalized Unicode characters, stripped zero-width spaces, and decoded standard encodings.</span>
-                </div>
-              </div>
-
-              <div className="flex items-start gap-3">
-                <div className="w-5 h-5 rounded-full bg-[rgba(53,201,138,0.15)] text-[#35C98A] flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">
-                  2
-                </div>
-                <div>
-                  <span className="font-semibold text-[#F4F7FB] block">Rule & Credential Scans</span>
-                  <span className="text-[#8F9BAD] text-[11px]">Evaluated injection signatures, role overrides, system instruction extraction patterns, and credential leaks.</span>
-                </div>
-              </div>
-
-              <div className="flex items-start gap-3">
-                <div className="w-5 h-5 rounded-full bg-[rgba(53,201,138,0.15)] text-[#35C98A] flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">
-                  3
-                </div>
-                <div>
-                  <span className="font-semibold text-[#F4F7FB] block">Machine Learning Analysis</span>
-                  <span className="text-[#8F9BAD] text-[11px]">Scored payload risk using trained classifiers and text feature analysis.</span>
-                </div>
-              </div>
-
-              <div className="flex items-start gap-3">
-                <div className={`w-5 h-5 rounded-full flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5 ${
-                  isBlocked ? 'bg-[rgba(239,98,111,0.15)] text-[#EF626F]' : (isSanitized ? 'bg-[rgba(233,180,76,0.15)] text-[#E9B44C]' : 'bg-[rgba(53,201,138,0.15)] text-[#35C98A]')
-                }`}>
-                  4
-                </div>
-                <div>
-                  <span className={`font-semibold block ${
-                    isBlocked ? 'text-[#EF626F]' : (isSanitized ? 'text-[#E9B44C]' : 'text-[#35C98A]')
-                  }`}>
-                    Policy Decision
-                  </span>
-                  <span className="text-[#8F9BAD] text-[11px]">
-                    {isBlocked
-                      ? `Risk score (${normalizedScore}%) exceeded allowable threshold. Blocked.`
-                      : (isSanitized
-                        ? `Threat patterns sanitized according to active policy.`
-                        : `Risk score (${normalizedScore}%) within allowable baseline. Request allowed.`)}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Inspected Prompt Payload (Captured & PII Masked) */}
-          <div className="bg-[#111827] border border-[#263247] rounded-lg p-4">
-            <div className="flex items-center justify-between pb-2 mb-3 border-b border-[#263247]">
-              <h2 className="text-xs font-mono font-bold uppercase tracking-wider text-[#8F9BAD] flex items-center gap-2">
-                <FileText size={14} className="text-[#4F8CFF]" />
-                <span>Captured Prompt</span>
+      <section className="space-y-5">
+        <div className={`rounded-xl border p-5 sm:p-6 ${isBlocked ? 'border-[rgba(239,98,111,0.45)] bg-[rgba(239,98,111,0.06)]' : 'border-[rgba(53,201,138,0.35)] bg-[rgba(53,201,138,0.05)]'}`}>
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-[#8F9BAD]">{isBlocked ? 'Request blocked' : (isSanitized ? 'Request sanitized' : 'Request allowed')}</p>
+              <h2 className={`mt-1 text-xl font-bold ${isBlocked ? 'text-[#EF626F]' : (isSanitized ? 'text-[#E9B44C]' : 'text-[#35C98A]')}`}>
+                {isBlocked ? 'Why Aegis stopped this' : (isSanitized ? 'What Aegis changed' : 'Why Aegis allowed this')}
               </h2>
-              <div className="flex items-center gap-2">
-                {hasPii && (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[rgba(233,180,76,0.15)] border border-[rgba(233,180,76,0.3)] text-[10px] font-mono text-[#E9B44C]">
-                    <EyeOff size={11} />
-                    <span>PII Masked</span>
-                  </span>
-                )}
-                {promptText && (
-                  <button
-                    onClick={() => copyPromptText(promptText)}
-                    className="inline-flex items-center gap-1 text-[11px] font-mono text-[#4F8CFF] hover:text-[#6A9DFF] px-2 py-0.5 rounded bg-[#172033] border border-[#263247] transition-colors"
-                  >
-                    {copiedPrompt ? <Check size={11} className="text-[#35C98A]" /> : <Copy size={11} />}
-                    <span>{copiedPrompt ? 'Copied' : 'Copy Prompt'}</span>
-                  </button>
-                )}
-              </div>
             </div>
-
-            {promptText ? (
-              <div className="space-y-3">
-                <div className="p-3 bg-[#080C18] border border-[#1D2738] rounded font-mono text-xs text-[#E1E7F0] whitespace-pre-wrap break-words leading-relaxed select-text">
-                  {promptText}
-                </div>
-
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 text-[11px] font-mono text-[#8F9BAD] border-t border-[#1D2738]">
-                  <div className="flex items-center gap-2">
-                    <span>Cryptographic Hash:</span>
-                    <span className="text-[#C0C8D6] bg-[#0E1526] px-1.5 py-0.5 rounded border border-[#1D2738] break-all">
-                      {promptHash ? `${promptHash.slice(0, 16)}...${promptHash.slice(-16)}` : 'Verified'}
-                    </span>
-                  </div>
-                  {piiTypes.length > 0 && (
-                    <div className="flex items-center gap-1.5">
-                      <span>Redacted Categories:</span>
-                      {piiTypes.map((t: string, idx: number) => (
-                        <span key={idx} className="px-1.5 py-0.5 rounded bg-[#172033] border border-[#263247] text-[10px] text-[#E9B44C]">
-                          {t}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className="p-3 bg-[#080C18] border border-[#1D2738] rounded text-xs font-mono text-[#8F9BAD] flex items-center justify-between">
-                <span>Prompt captured and verified under cryptographic hash {promptHash ? `${promptHash.slice(0, 12)}...` : 'ledger'}.</span>
-                <span className="text-[#35C98A] text-[11px] inline-flex items-center gap-1">
-                  <Lock size={12} /> Privacy Preserved
-                </span>
-              </div>
-            )}
+            <div className="flex items-center gap-2">
+              <DecisionBadge decision={data.decision as Decision} />
+            </div>
           </div>
 
-          {/* Extracted Signals & Evidence */}
-          <div className="bg-[#111827] border border-[#263247] rounded-lg p-4">
-            <h2 className="text-xs font-mono font-bold uppercase tracking-wider text-[#8F9BAD] mb-3 pb-2 border-b border-[#263247] flex items-center gap-2">
-              <List size={14} className={isBlocked ? "text-[#EF626F]" : "text-[#4F8CFF]"} />
-              <span>Detected Signals & Evidence</span>
-            </h2>
+          <p className="mt-4 max-w-4xl text-sm leading-6 text-[#E1E7F0]">{decisionReason}</p>
 
-            {data.details?.detectedAttacks?.length ? (
-              <div className="space-y-3">
-                {data.details.detectedAttacks.map((attack: any, i: number) => {
-                  const confNum = attack.confidence != null && !isNaN(Number(attack.confidence))
-                    ? Number(attack.confidence)
-                    : (normalizedScore > 0 ? normalizedScore / 100 : 0.95);
-                  const confPct = (confNum <= 1.0 ? confNum * 100 : confNum).toFixed(0);
-
+          <div className="mt-5 border-t border-[#263247] pt-4">
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className="text-lg font-bold text-[#F4F7FB]">{normalizedScore}/100</span>
+              <span className="text-sm text-[#C0C8D6]">{String(effectiveRiskLevel).toLowerCase()} risk</span>
+              <span className="text-xs text-[#8F9BAD]">Risk level: {String(effectiveRiskLevel).toLowerCase()}. Score based on:</span>
+            </div>
+            {attackTypes.length > 0 ? (
+              <ul className="mt-2 flex flex-wrap gap-2">
+                {attackTypes.map((type) => {
                   return (
-                    <div key={i} className="p-3 bg-[#0E1526] border border-[#263247] rounded">
-                      <div className="flex justify-between items-center mb-2">
-                        <AttackTypeBadge type={attack.attackType} />
-                        <span className="text-xs font-mono text-[#EF626F]">
-                          Confidence: {confPct}%
-                        </span>
-                      </div>
-
-                      <div className="space-y-1.5 pt-2 border-t border-[#1D2738]">
-                        {attack.evidence?.map((ev: any, j: number) => (
-                          <div key={j} className="text-xs font-mono text-[#C0C8D6] flex items-start gap-2">
-                            <span className="text-[#EF626F]">•</span>
-                            <span>
-                              <strong className="text-[#4F8CFF]">[{ev.detectorName}]</strong> {ev.signal}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
+                    <li key={type} className="rounded-md border border-[#344258] bg-[#0E1526] px-3 py-2 text-sm text-[#E1E7F0]">
+                      {attackDescriptions[type] || type.toLowerCase().replace(/_/g, ' ')}
+                    </li>
                   );
                 })}
-              </div>
+              </ul>
             ) : (
-              <div className="p-3 bg-[#080C18] border border-[#1D2738] rounded text-xs font-mono text-[#35C98A] flex items-center gap-2">
-                <CheckCircle2 size={14} />
-                <span>No adversarial injection patterns detected in prompt payload.</span>
-              </div>
+              <p className="mt-2 text-sm text-[#C0C8D6]">No specific attack type was saved for this scan. The score reflects the overall detector assessment.</p>
             )}
           </div>
 
-          {/* Raw Cryptographic Audit Record */}
-          <div className="bg-[#111827] border border-[#263247] rounded-lg overflow-hidden">
-            <div className="px-4 py-2.5 bg-[#0E1526] border-b border-[#263247] flex items-center justify-between">
-              <span className="text-xs font-mono font-bold uppercase text-[#F4F7FB]">
-                Raw Cryptographic Audit Record
-              </span>
-              <button
-                onClick={copyJson}
-                className="inline-flex items-center gap-1 text-xs font-mono text-[#4F8CFF] hover:text-[#6A9DFF]"
-              >
-                {copiedRecord ? <Check size={13} className="text-[#35C98A]" /> : <Copy size={13} />}
-                <span>{copiedRecord ? 'Copied' : 'Copy Record'}</span>
+          {hasPii && (
+            <p className="mt-4 rounded-md border border-[rgba(233,180,76,0.25)] bg-[rgba(233,180,76,0.06)] px-3 py-2 text-xs leading-5 text-[#D6B974]">
+              Personal data ({piiTypes.join(', ') || 'sensitive information'}) was masked in this audit record. It is separate from the reason for this decision.
+            </p>
+          )}
+        </div>
+
+        <details className="rounded-xl border border-[#263247] bg-[#111827]">
+          <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-[#E1E7F0]">View the content that was scanned</summary>
+          <div className="border-t border-[#263247] p-4">
+            {promptText ? (
+              <>
+                <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-[#1D2738] bg-[#080C18] p-4 font-mono text-xs leading-relaxed text-[#E1E7F0]">{promptText}</pre>
+                {hasPii && <p className="mt-2 text-xs text-[#D6B974]">Sensitive values are masked in this saved copy.</p>}
+              </>
+            ) : (
+              <p className="text-sm text-[#8F9BAD]">The content itself was not retained. This record contains its audit metadata only.</p>
+            )}
+          </div>
+        </details>
+
+        <details className="rounded-xl border border-[#263247] bg-[#111827]">
+          <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-[#8F9BAD]">Technical audit details</summary>
+          <div className="border-t border-[#263247]">
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2 px-4 py-3 text-xs text-[#8F9BAD]">
+              <span>Source: <strong className="font-medium text-[#C0C8D6]">{data.source_type || 'unknown'}</strong></span>
+              <span>Policy: <strong className="font-medium text-[#C0C8D6]">{data.policy || data.details?.policy || 'default'}</strong></span>
+              {promptHash && <span className="break-all">Audit hash: <strong className="font-mono font-normal text-[#C0C8D6]">{promptHash.slice(0, 16)}…</strong></span>}
+            </div>
+            <div className="flex justify-end border-t border-[#263247] px-4 py-2">
+              <button onClick={copyJson} className="inline-flex items-center gap-1.5 text-xs text-[#8F9BAD] hover:text-[#E1E7F0]">
+                {copiedRecord ? <Check size={13} /> : <Copy size={13} />}{copiedRecord ? 'Copied' : 'Copy audit record'}
               </button>
             </div>
-
-            <SyntaxHighlighter
-              language="json"
-              style={vscDarkPlus}
-              customStyle={{ margin: 0, padding: '14px', fontSize: '11px', background: '#080C18' }}
-            >
-              {JSON.stringify(data.details || data, null, 2)}
-            </SyntaxHighlighter>
+            <div className="max-h-80 overflow-auto">
+              <SyntaxHighlighter language="json" style={vscDarkPlus} customStyle={{ margin: 0, padding: '14px', fontSize: '11px', background: '#080C18' }}>
+                {JSON.stringify(data.details || data, null, 2)}
+              </SyntaxHighlighter>
+            </div>
           </div>
-        </div>
-      </div>
+        </details>
+      </section>
     </div>
   );
 }

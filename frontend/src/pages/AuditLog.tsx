@@ -140,6 +140,33 @@ export default function AuditLog() {
       render: (item) => <DecisionBadge decision={item.decision as Decision} />,
     },
     {
+      key: 'reason',
+      header: 'Decision reason',
+      render: (item) => {
+        const rationale = item.decision_rationale || item.evidence?.decision_rationale;
+        const attacks = rationale?.attack_types || item.evidence?.attack_types || [];
+        const attackNames = attacks.map((attack: any) => typeof attack === 'string' ? attack : attack.type || attack.attack_type).filter(Boolean);
+        const plainReasons: Record<string, string> = {
+          INSTRUCTION_OVERRIDE: 'tells the AI to ignore its instructions',
+          ROLE_CHANGE: 'tries to change the AI’s role',
+          SECRET_EXTRACTION: 'asks the AI to reveal protected information',
+          TOOL_ABUSE: 'asks the AI to take an unauthorized action',
+          CREDENTIAL_THEFT: 'tries to obtain passwords or API keys',
+          CONTEXT_POISONING: 'plants misleading instructions in supplied content',
+          MULTI_STEP_JAILBREAK: 'tries to bypass safeguards through multiple steps',
+          ENCODED_INSTRUCTION: 'hides instructions in encoded text',
+          INDIRECT_PROMPT_INJECTION: 'hides instructions in external content',
+        };
+        const summary = attackNames.map((name: string) => plainReasons[name.toUpperCase()] || name.replace(/_/g, ' ').toLowerCase()).join('; ');
+        const reason = attackNames.length
+          ? `${String(item.decision).toUpperCase() === 'BLOCK' ? 'Blocked' : 'Flagged'}: ${summary}`
+          : (String(item.decision).toUpperCase() === 'BLOCK'
+            ? (rationale?.gate_outcome === 'DEGRADED_FAILSAFE_BLOCK' ? 'Blocked because a security check could not finish' : `Blocked by safety rules (${Math.round(((item.riskScore ?? item.risk_score ?? 0) <= 1 ? (item.riskScore ?? item.risk_score ?? 0) * 100 : (item.riskScore ?? item.risk_score ?? 0)))} risk)`)
+            : (item.has_pii ? `Allowed; ${(item.pii_types || []).join(', ')} masked in the audit copy` : 'Allowed; no specific unsafe instruction was recorded'));
+        return <span className="block max-w-[300px] text-xs text-[#C0C8D6] truncate" title={reason}>{reason}</span>;
+      },
+    },
+    {
       key: 'riskLevel',
       header: 'Risk Level',
       width: '110px',
@@ -218,6 +245,7 @@ export default function AuditLog() {
           >
             <option value="all">All Severities</option>
             <option value="critical">Critical</option>
+            <option value="high">High</option>
             <option value="medium">Medium</option>
             <option value="low">Low</option>
           </select>
@@ -227,6 +255,13 @@ export default function AuditLog() {
           Showing {filteredLogs.length} of {logs.length} events
         </span>
       </div>
+
+      <details className="rounded-lg border border-[#263247] bg-[#111827] px-4 py-3 text-sm">
+        <summary className="cursor-pointer font-semibold text-[#E1E7F0]">How severity is scored</summary>
+        <p className="mt-2 text-xs leading-relaxed text-[#8F9BAD]">
+          Severity comes from the normalized risk score: Low below 20, Medium 20 to below 50, High 50 to below 80, and Critical 80 or higher. The score combines detector evidence and contextual signals. Severity describes assessed risk; the gate decision is separate. A request can be blocked by the 75% automatic-block threshold, a mandatory policy, or a failsafe while still labeled High. PII detection is shown separately and does not automatically mean the request was blocked.
+        </p>
+      </details>
 
       {/* Ledger Table */}
       <DataTable

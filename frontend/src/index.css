@@ -459,6 +459,9 @@ body { font-size: 15px; line-height: 1.55; }
 .decision-hero p { margin: 0; color: #a8b7c5; font-size: 14px; line-height: 1.6; }
 .decision-hero-block, .decision-hero-quarantine, .decision-hero-require_review { background: #281b24; border-color: #70414b; }
 .decision-hero-sanitize { background: #282319; border-color: #6b5831; }
+.result-explanation { margin-top: 14px; padding: 14px 15px; border: 1px solid var(--line); border-radius: 9px; background: #0c1523; }
+.result-explanation strong { color: #e1e7f0; font-size: 13px; font-weight: 600; }
+.result-explanation p { margin: 6px 0 0; color: #b6c4d4; font-size: 13px; line-height: 1.65; }
 .result-callout { display: flex; align-items: center; gap: 10px; margin-top: 15px; padding: 12px; border-radius: 8px; color: #efc67b; background: #e9b44c0c; border: 1px solid #806a3b; font-size: 13px; }
 .flagged-evidence { margin: 20px 0; padding: 15px; border: 1px solid #5e4f31; background: #f5b84f0c; border-radius: 9px; }
 .flagged-evidence strong { color: #f0cf8d; font-size: 13px; }

@@ -38,7 +38,12 @@ def main() -> None:
         MODEL_DIR / "laya" / "english",
         ["config.json", "rl_agent_config.json", "model.safetensors", "encoder/**", "tokenizer/**"],
     )
-    print("Model assets are ready. Open-Jev is an optional sidecar; configure OPEN_JEV_URL separately.")
+    download(
+        "com-kotobalabs/open-jev-deberta-v3-large",
+        MODEL_DIR / "open_jev",
+        ["config.json", "model.safetensors", "head.safetensors", "tokenizer.json", "tokenizer_config.json", "open_jev_config.json"],
+    )
+    print("Model assets are ready. Open-Jev runs locally during ambiguous escalations.")
 
 
 if __name__ == "__main__":

@@ -1,48 +1,59 @@
-# Credentials, environment files, and local state
-.env
-.env.*
-!.env.example
-!backend/.env.example
-.aegis-local-api-key
-*.pem
-*.key
-*.db
-*.sqlite
-*.sqlite3
-
 # Python
-.venv/
-.venv*/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
 venv/
 ENV/
-__pycache__/
-**/__pycache__/
-*.py[cod]
-*.egg-info/
-.pytest_cache/
-.mypy_cache/
+.venv/
+.venv312/
 
-# JavaScript build/runtime artifacts
+# Node
 node_modules/
-frontend/dist/
 dist/
 .npm/
 npm-debug.log*
 
-# Downloaded ML model weights and caches (optional; fetched by installer)
-backend/models/**
-!backend/models/README.md
-!.gitkeep
-**/.cache/
+# Docker
+.docker/
 
-# Editors and operating-system files
-.vscode/
+# IDE
 .idea/
+.vscode/
 *.swp
+*.swo
+
+# Models (except model configs if tracked)
+models/*
+!models/.keep
+
+# Secrets
+.env
+*.pem
+.aegis-local-api-key
+
+# OS & Local Databases
 .DS_Store
 Thumbs.db
-
-# Local evaluation output / generated reports
-reports/
-eval/
-evaluation/
+*.db
+scratch/
+/submission/

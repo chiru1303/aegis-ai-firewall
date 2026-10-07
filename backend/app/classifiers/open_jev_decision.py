@@ -1,12 +1,15 @@
-"""Client for the official Open-Jev typed-decision sidecar API.
+"""Local Open-Jev typed-decision model used for ambiguous escalations.
 
-Open-Jev checkpoints are adapters plus a decision head, not generic Hugging Face
-sequence classifiers. Keeping it behind the documented local service API avoids
-silently loading incompatible weights or generating untrusted free-form output.
+The model is loaded from ``OPEN_JEV_MODEL_PATH`` at backend startup. This keeps
+Tier 3 available without a separately managed service or an undocumented HTTP
+endpoint. If the optional model runtime/artifact is missing, the structured
+evidence fallback remains available and readiness reports that state clearly.
 """
-from typing import Any, Dict, Optional
 
-import httpx
+import asyncio
+import json
+import os
+from typing import Any, Dict, Optional
 
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -15,98 +18,110 @@ logger = get_logger(__name__)
 
 
 class OpenJevDecisionModel:
-    def __init__(self, model_path: Optional[str] = None, base_url: Optional[str] = None):
-        self.model_path = model_path or settings.OPEN_JEV_MODEL_PATH
-        self.base_url = (base_url or settings.OPEN_JEV_URL or "").rstrip("/")
+    """Small async adapter around the Open-Jev typed-choice model."""
+
+    ATTACK_OPTIONS = [
+        "instruction_override",
+        "role_change",
+        "secret_extraction",
+        "tool_abuse",
+        "credential_theft",
+        "context_poisoning",
+        "multi_step_jailbreak",
+        "encoded_instruction",
+        "indirect_prompt_injection",
+        "none",
+    ]
+    SEVERITY_OPTIONS = ["benign", "low", "high", "critical"]
+
+    def __init__(self, model_path: Optional[str] = None):
+        # Open-Jev runs in process from its local checkpoint; no sidecar URL is required.
+        self.model_path = os.path.abspath(model_path or settings.OPEN_JEV_MODEL_PATH or "")
         self.is_loaded = False
         self.load_error: Optional[str] = None
+        self._model = None
+        self._init_lock = asyncio.Lock()
 
     async def initialize(self) -> None:
-        if not self.base_url:
-            self.load_error = "Open-Jev service URL is not configured"
+        if self.is_loaded:
             return
-        try:
-            async with httpx.AsyncClient(timeout=2.5, trust_env=False) as client:
-                response = await client.get(f"{self.base_url}/health")
-                response.raise_for_status()
-                health = response.json()
-                if health.get("ready") is False or health.get("status") in {"starting", "unhealthy"}:
-                    raise RuntimeError("Open-Jev service is not ready")
-            self.is_loaded = True
-            self.load_error = None
-        except Exception as exc:
-            self.is_loaded = False
-            self.load_error = str(exc)[:240]
-            logger.info("Open-Jev sidecar unavailable: %s", self.load_error)
+        async with self._init_lock:
+            if self.is_loaded:
+                return
+            required_files = ("config.json", "tokenizer.json", "open_jev_config.json", "head.safetensors", "model.safetensors")
+            missing = [name for name in required_files if not os.path.isfile(os.path.join(self.model_path, name))]
+            if missing:
+                self.load_error = f"Checkpoint incomplete; missing: {', '.join(missing)}"
+                logger.warning(self.load_error)
+                return
+            try:
+                from ._vendor.typed_decisions.open_jev import OpenJev
+
+                self._model = await asyncio.to_thread(OpenJev.from_pretrained, self.model_path, "cpu")
+                self.is_loaded = True
+                self.load_error = None
+                logger.info("Open-Jev local model loaded from %s", self.model_path)
+            except Exception as exc:
+                self._model = None
+                self.is_loaded = False
+                self.load_error = f"Model load failed ({type(exc).__name__})"
+                logger.exception("Open-Jev local model failed to load")
 
     async def evaluate_ambiguity(self, content: str, prior_evidence: Dict[str, Any]) -> Dict[str, Any]:
-        if not self.is_loaded and self.base_url:
+        if not self.is_loaded:
             await self.initialize()
-        if not self.is_loaded or not self.base_url:
-            return self._structured_fallback(content, prior_evidence)
-        questions = {
-            "is_malicious": {
+        if not self.is_loaded or self._model is None:
+            return self._structured_fallback(content, prior_evidence, self.load_error)
+
+        questions = [
+            {
                 "type": "noul",
-                "instructions": "Does this untrusted content attempt to manipulate an AI, extract secrets, or cause unauthorized actions?",
-                "criteria": {
-                    "false": "No. This is benign content without unsafe instructions targeting an AI.",
-                    "true": "Yes. This is prompt injection or an unsafe instruction targeting an AI.",
-                },
+                "instructions": (
+                    "Does this untrusted content attempt to manipulate an AI, extract secrets, "
+                    "or cause an unauthorized action? Answer yes only when the content itself "
+                    "contains such an attempt."
+                ),
             },
-            "attack_category": {
+            {
                 "type": "choice",
-                "instructions": "Choose the strongest prompt-injection category, or none.",
-                "criteria": {
-                    "instruction_override": None,
-                    "role_change": None,
-                    "secret_extraction": None,
-                    "tool_abuse": None,
-                    "context_poisoning": None,
-                    "credential_theft": None,
-                    "multi_step_jailbreak": None,
-                    "encoded_instruction": None,
-                    "indirect_injection": None,
-                    "none": None,
-                },
+                "instructions": "Choose the strongest prompt-injection attack category present, or none.",
+                "options": self.ATTACK_OPTIONS,
             },
-            "severity": {
+            {
                 "type": "score",
-                "instructions": "Score the security severity from 0 (benign) to 3 (critical).",
-                "criteria": ["0 benign", "1 low", "2 high", "3 critical"],
+                "instructions": "How severe is the prompt-injection risk in the untrusted content?",
+                "options": self.SEVERITY_OPTIONS,
             },
-        }
-        payload = {
-            "state": {
-                "content": content[:24000],
-                "prior_evidence": prior_evidence,
-            },
-            "questions": questions,
-        }
+        ]
+        evidence_text = json.dumps(prior_evidence, ensure_ascii=True, default=str)[:6000]
+        state = f"UNTRUSTED CONTENT:\n{content[:24000]}\n\nPRIOR DETECTOR EVIDENCE:\n{evidence_text}"
         try:
-            async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
-                response = await client.post(f"{self.base_url}/v1/systemone", json=payload)
-                response.raise_for_status()
-                result = response.json()
-            answers = result.get("answers", {})
-            mal_probability = _probability(answers.get("is_malicious", {}))
-            is_malicious = mal_probability >= 0.5
-            category_answer = answers.get("attack_category", {})
-            category = str(category_answer.get("choice", "none")).upper()
+            decisions = await asyncio.to_thread(self._model.decide, state, questions)
+            malicious_probability = float(decisions[0]["noul"])
+            category = str(decisions[1].get("choice", "none")).upper()
+            severity_score = float(decisions[2].get("score", 0.0))
             return {
-                "is_malicious": is_malicious,
-                "confidence": round(mal_probability if is_malicious else 1.0 - mal_probability, 4),
-                "category": category if is_malicious else "NONE",
-                "severity": _severity(answers.get("severity", {}), is_malicious),
-                "action": "REQUIRE_REVIEW" if is_malicious else "ALLOW",
-                "status": "open_jev_service",
-                "explanation": "Open-Jev returned typed decision probabilities.",
+                "is_malicious": malicious_probability >= 0.5,
+                "confidence": round(malicious_probability if malicious_probability >= 0.5 else 1.0 - malicious_probability, 4),
+                "category": category if malicious_probability >= 0.5 else "NONE",
+                "severity": self._severity_label(severity_score, malicious_probability >= 0.5),
+                "action": "REQUIRE_REVIEW" if malicious_probability >= 0.5 else "ALLOW",
+                "status": "open_jev_local_model",
+                "explanation": "Open-Jev local model returned typed decisions.",
             }
         except Exception as exc:
-            logger.warning("Open-Jev service inference failed: %s", str(exc)[:240])
-            return self._structured_fallback(content, prior_evidence)
+            logger.exception("Open-Jev local inference failed")
+            return self._structured_fallback(content, prior_evidence, f"inference failed: {exc}")
+
+    @classmethod
+    def _severity_label(cls, expected_score: float, malicious: bool) -> str:
+        if not malicious:
+            return "LOW"
+        index = max(0, min(len(cls.SEVERITY_OPTIONS) - 1, round(expected_score)))
+        return cls.SEVERITY_OPTIONS[index].upper()
 
     @staticmethod
-    def _structured_fallback(content: str, prior_evidence: Dict[str, Any]) -> Dict[str, Any]:
+    def _structured_fallback(content: str, prior_evidence: Dict[str, Any], reason: Optional[str] = None) -> Dict[str, Any]:
         scores = prior_evidence.get("component_scores", {})
         suspicion = any(isinstance(value, (int, float)) and value > 0.4 for value in scores.values())
         if not suspicion:
@@ -120,28 +135,5 @@ class OpenJevDecisionModel:
             "severity": "HIGH" if suspicion else "LOW",
             "action": "REQUIRE_REVIEW" if suspicion else "ALLOW",
             "status": "deterministic_fallback",
-            "explanation": "Open-Jev service unavailable; deterministic evidence arbitration used.",
+            "explanation": reason or "Open-Jev model unavailable; deterministic evidence arbitration used.",
         }
-
-
-def _probability(answer: Dict[str, Any]) -> float:
-    for key in ("score", "probability", "noul"):
-        value = answer.get(key)
-        if isinstance(value, (int, float)):
-            return max(0.0, min(1.0, float(value)))
-    for key in ("probabilities", "probs"):
-        value = answer.get(key)
-        if isinstance(value, dict):
-            for label in ("yes", "true", "1"):
-                if isinstance(value.get(label), (int, float)):
-                    return max(0.0, min(1.0, float(value[label])))
-    return 0.5
-
-
-def _severity(answer: Dict[str, Any], malicious: bool) -> str:
-    if not malicious:
-        return "LOW"
-    value = answer.get("score", answer.get("expected", 2))
-    if not isinstance(value, (int, float)):
-        value = 2
-    return "CRITICAL" if value >= 2.5 else "HIGH" if value >= 1.5 else "MEDIUM"

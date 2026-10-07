@@ -80,6 +80,15 @@ class ConfidenceGate:
 
         t0_max_risk = max([d.risk_score for d in tier0_results], default=0.0)
         t1_max_risk = max([d.risk_score for d in tier1_results], default=0.0)
+        strong_rule_confirmation = any(
+            d.is_malicious and d.detector_confidence >= 0.90 and d.risk_score >= 0.75
+            for d in tier0_results
+        )
+        independent_model_votes = {
+            d.detector_id for d in tier1_results
+            if d.is_malicious and d.detector_confidence >= 0.90
+        }
+        independent_model_confirmation = len(independent_model_votes) >= 2
 
         # Base fused risk
         fused_risk = max(t0_max_risk * 0.95, t1_max_risk)
@@ -103,7 +112,14 @@ class ConfidenceGate:
         decision_confidence = max(0.1, min(1.0, decision_confidence))
 
         # 4. Fast-Block Gate Evaluation
-        if fused_risk >= self.FAST_BLOCK_MIN_RISK and decision_confidence >= self.FAST_BLOCK_MIN_DECISION_CONF:
+        # A single learned model is a useful signal, not sufficient proof for an
+        # automatic block. Require a strong deterministic match or agreement from
+        # at least two independent ML models; all other high-risk cases escalate.
+        if (
+            fused_risk >= self.FAST_BLOCK_MIN_RISK
+            and decision_confidence >= self.FAST_BLOCK_MIN_DECISION_CONF
+            and (strong_rule_confirmation or independent_model_confirmation)
+        ):
             reasons.append(
                 f"Fast-Block approved: Risk {fused_risk:.2f} >= {self.FAST_BLOCK_MIN_RISK} "
                 f"with decision confidence {decision_confidence:.2f}."

@@ -137,6 +137,8 @@ export interface AuditRecord {
   origin?: string;
   policy?: string;
   evidence?: any;
+  decision_rationale?: any;
+  policy_rules_applied?: string[];
   details?: any;
 }
 

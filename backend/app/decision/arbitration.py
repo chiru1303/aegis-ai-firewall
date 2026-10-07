@@ -108,6 +108,9 @@ class ArbitrationRouter:
 
                 is_mal = bool(jev_res.get("is_malicious", False))
                 conf = float(jev_res.get("confidence", 0.5))
+                attack_category = str(jev_res.get("category") or "").upper()
+                if not attack_category or attack_category == "NONE":
+                    attack_category = "INSTRUCTION_OVERRIDE"
 
                 escalation_results.append(
                     DetectorContractResult(
@@ -118,8 +121,11 @@ class ArbitrationRouter:
                         is_malicious=is_mal,
                         detector_confidence=conf,
                         risk_score=conf if is_mal else (1.0 - conf) * 0.15,
-                        attack_types=["INSTRUCTION_OVERRIDE"] if is_mal else [],
-                        evidence_snippets=[f"Open-Jev ruling: {jev_res.get('explanation', 'Arbitration completed')}"],
+                        attack_types=[attack_category] if is_mal else [],
+                        evidence_snippets=[
+                            f"Open-Jev ({jev_res.get('status', 'unknown source')}): "
+                            f"{jev_res.get('explanation', 'Arbitration completed')}"
+                        ],
                         latency_ms=round(jev_ms, 2),
                         status=DetectorStatus.SUCCESS,
                     )

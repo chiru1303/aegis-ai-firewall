@@ -84,7 +84,8 @@ async def lifespan(app: FastAPI):
         logger.info(f"[OK] ProtectAI DeBERTa: {'loaded' if ensemble_classifier.deberta.is_loaded else 'not loaded'}")
         logger.info(f"[OK] LightGBM Classifier: {'loaded' if ensemble_classifier.lgb.is_loaded else 'not loaded'}")
         logger.info(f"[OK] Laya Multilingual: {'loaded' if ensemble_classifier.laya.is_loaded else 'not loaded'}")
-        logger.info(f"[OK] Open-Jev Arbitrator: {'loaded' if ensemble_classifier.open_jev.is_loaded else 'not loaded'}")
+        jev_status = "loaded" if ensemble_classifier.open_jev.is_loaded else f"not loaded ({ensemble_classifier.open_jev.load_error or 'unknown error'})"
+        logger.info(f"[OK] Open-Jev local arbitrator: {jev_status}")
     except Exception as e:
         logger.warning(f"[--] Ensemble initialization exception: {e}")
 
