@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import inspect
+import socket
 import time
 from html import escape
 from typing import Any
@@ -16,6 +17,7 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip(
 COMPANY_NAME = os.getenv("COMPANY_NAME", "XYZ Company").strip() or "XYZ Company"
 DEFAULT_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b-instruct")
 REQUEST_TIMEOUT = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "180"))
+PORT_SEARCH_COUNT = 20
 
 DEFAULT_SYSTEM_PROMPT = f"""You are the customer support assistant for {COMPANY_NAME}.
 Be warm, clear, and concise. Help with general product, order, billing, and account questions.
@@ -28,6 +30,19 @@ SUGGESTIONS = [
     "What information do you need to help me with an order?",
     "How do I contact customer support?",
 ]
+
+
+def choose_server_port() -> int:
+    """Use the requested port or find the next free local Gradio port."""
+    start_port = int(os.getenv("GRADIO_SERVER_PORT", "7860"))
+    for port in range(start_port, min(start_port + PORT_SEARCH_COUNT, 65536)):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            try:
+                probe.bind(("127.0.0.1", port))
+                return port
+            except OSError:
+                continue
+    raise RuntimeError(f"No free local port found between {start_port} and {start_port + PORT_SEARCH_COUNT - 1}.")
 
 
 def get_models() -> tuple[list[str], str]:
@@ -109,6 +124,7 @@ def chat(message: str, history: list[dict[str, Any]], model: str, system_prompt:
 
 models, initial_status = get_models()
 initial_model = DEFAULT_MODEL if DEFAULT_MODEL in models else (models[0] if models else None)
+SERVER_PORT = choose_server_port()
 css = """
 .gradio-container { max-width: 1050px !important; margin: 0 auto !important; }
 #brand { border-radius: 16px; padding: 22px 26px; background: linear-gradient(120deg,#123c66,#237c8b); color: white; }
@@ -120,7 +136,7 @@ _launch_parameters = inspect.signature(gr.Blocks.launch).parameters
 _blocks_options: dict[str, Any] = {}
 _launch_options: dict[str, Any] = {
     "server_name": "127.0.0.1",
-    "server_port": int(os.getenv("GRADIO_SERVER_PORT", "7860")),
+    "server_port": SERVER_PORT,
     "share": False,
 }
 for _name, _value in (("theme", gr.themes.Soft()), ("css", css)):
@@ -171,5 +187,5 @@ with gr.Blocks(title=f"{COMPANY_NAME} · Customer Support", **_blocks_options) a
 if __name__ == "__main__":
     print(f"Company: {COMPANY_NAME}")
     print(f"Ollama: {OLLAMA_BASE_URL}")
-    print("Chat page: http://127.0.0.1:7860")
+    print(f"Chat page: http://127.0.0.1:{SERVER_PORT}")
     demo.launch(**_launch_options)
