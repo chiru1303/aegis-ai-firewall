@@ -14,6 +14,8 @@ import httpx
 
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
+GATEWAY_BASE_URL = os.getenv("GATEWAY_BASE_URL", "").rstrip("/")
+GATEWAY_API_KEY = os.getenv("GATEWAY_API_KEY", "").strip()
 COMPANY_NAME = os.getenv("COMPANY_NAME", "XYZ Company").strip() or "XYZ Company"
 DEFAULT_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b-instruct")
 REQUEST_TIMEOUT = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "180"))
@@ -89,29 +91,63 @@ def chat(message: str, history: list[dict[str, Any]], model: str, system_prompt:
         return list(history or []), "Select a local Ollama model first."
 
     started = time.perf_counter()
+    messages = _messages(message, history, system_prompt or "")
     try:
-        response = httpx.post(
-            f"{OLLAMA_BASE_URL}/api/chat",
-            json={
-                "model": model,
-                "messages": _messages(message, history, system_prompt or ""),
-                "stream": False,
-            },
-            timeout=REQUEST_TIMEOUT,
-            trust_env=False,
-        )
+        if GATEWAY_BASE_URL:
+            if not GATEWAY_API_KEY:
+                return list(history or []), "Gateway key is missing. Set GATEWAY_API_KEY before starting the chatbot."
+            response = httpx.post(
+                f"{GATEWAY_BASE_URL}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {GATEWAY_API_KEY}",
+                    "X-API-Key": GATEWAY_API_KEY,
+                },
+                json={"model": model, "messages": messages, "stream": False},
+                timeout=REQUEST_TIMEOUT,
+                trust_env=False,
+            )
+        else:
+            response = httpx.post(
+                f"{OLLAMA_BASE_URL}/api/chat",
+                json={"model": model, "messages": messages, "stream": False},
+                timeout=REQUEST_TIMEOUT,
+                trust_env=False,
+            )
+        if GATEWAY_BASE_URL and response.status_code == 403:
+            elapsed = round((time.perf_counter() - started) * 1000)
+            answer = "Sorry, I can't help with that request. Please try rephrasing it."
+            status = f"{COMPANY_NAME} assistant · {model} · {elapsed} ms"
+            updated = list(history or [])
+            updated.extend([
+                {"role": "user", "content": message.strip()},
+                {"role": "assistant", "content": answer},
+            ])
+            return updated, status
         response.raise_for_status()
-        answer = response.json().get("message", {}).get("content", "I couldn't generate a reply. Please try again.")
+        payload = response.json()
+        if GATEWAY_BASE_URL:
+            answer = payload.get("choices", [{}])[0].get("message", {}).get("content", "I couldn't generate a reply. Please try again.")
+        else:
+            answer = payload.get("message", {}).get("content", "I couldn't generate a reply. Please try again.")
         elapsed = round((time.perf_counter() - started) * 1000)
         status = f"{COMPANY_NAME} assistant · {model} · {elapsed} ms"
     except httpx.TimeoutException:
         answer = "The local model took too long to respond. Try a smaller model or increase OLLAMA_TIMEOUT_SECONDS."
         status = "Response timed out"
     except httpx.HTTPStatusError as exc:
-        answer = f"Ollama returned HTTP {exc.response.status_code}. Check that the selected model is installed."
-        status = f"Request failed · HTTP {exc.response.status_code}"
+        if GATEWAY_BASE_URL and exc.response.status_code == 401:
+            answer = "The chat service needs a valid API key. Update its server-side setting and restart the chatbot."
+            status = "Chat service configuration issue"
+        elif GATEWAY_BASE_URL and exc.response.status_code == 503:
+            answer = "The chat service is not ready. Check its provider and model settings."
+            status = "Chat service unavailable"
+        else:
+            service = "Chat service" if GATEWAY_BASE_URL else "Ollama"
+            answer = f"{service} returned HTTP {exc.response.status_code}. Check the model configuration."
+            status = f"Request failed · HTTP {exc.response.status_code}"
     except (httpx.HTTPError, ValueError, TypeError, KeyError) as exc:
-        answer = f"I couldn't reach the local model. Check that Ollama is running at {OLLAMA_BASE_URL}."
+        service_url = GATEWAY_BASE_URL if GATEWAY_BASE_URL else OLLAMA_BASE_URL
+        answer = f"I couldn't reach the chat service. Check that it is running at {service_url}."
         status = f"Connection issue · {type(exc).__name__}"
 
     updated = list(history or [])
