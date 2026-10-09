@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import inspect
 import time
 from html import escape
 from typing import Any
@@ -115,7 +116,20 @@ css = """
 #brand p { margin: 0; opacity: .88; }
 """
 
-with gr.Blocks(title=f"{COMPANY_NAME} · Customer Support", theme=gr.themes.Soft(), css=css) as demo:
+_launch_parameters = inspect.signature(gr.Blocks.launch).parameters
+_blocks_options: dict[str, Any] = {}
+_launch_options: dict[str, Any] = {
+    "server_name": "127.0.0.1",
+    "server_port": int(os.getenv("GRADIO_SERVER_PORT", "7860")),
+    "share": False,
+}
+for _name, _value in (("theme", gr.themes.Soft()), ("css", css)):
+    if _name in _launch_parameters:
+        _launch_options[_name] = _value
+    else:
+        _blocks_options[_name] = _value
+
+with gr.Blocks(title=f"{COMPANY_NAME} · Customer Support", **_blocks_options) as demo:
     gr.HTML(f'<div id="brand"><h1>{escape(COMPANY_NAME)} Support</h1><p>How can we help you today?</p></div>')
     with gr.Row():
         model = gr.Dropdown(
@@ -133,7 +147,12 @@ with gr.Blocks(title=f"{COMPANY_NAME} · Customer Support", theme=gr.themes.Soft
             label="Company assistant prompt",
             lines=5,
         )
-    chatbot = gr.Chatbot(type="messages", height=480, label="Conversation", allow_tags=False)
+    _chatbot_options: dict[str, Any] = {"height": 480, "label": "Conversation"}
+    if "type" in inspect.signature(gr.Chatbot).parameters:
+        _chatbot_options["type"] = "messages"
+    if "allow_tags" in inspect.signature(gr.Chatbot).parameters:
+        _chatbot_options["allow_tags"] = False
+    chatbot = gr.Chatbot(**_chatbot_options)
     with gr.Row():
         prompt = gr.Textbox(placeholder="Write a message…", label="Message", scale=8, lines=2)
         send = gr.Button("Send", variant="primary", scale=1)
@@ -153,8 +172,4 @@ if __name__ == "__main__":
     print(f"Company: {COMPANY_NAME}")
     print(f"Ollama: {OLLAMA_BASE_URL}")
     print("Chat page: http://127.0.0.1:7860")
-    demo.launch(
-        server_name="127.0.0.1",
-        server_port=int(os.getenv("GRADIO_SERVER_PORT", "7860")),
-        share=False,
-    )
+    demo.launch(**_launch_options)
