@@ -1,7 +1,7 @@
-"""Small Gradio chatbot for testing Aegis with a local Ollama model.
+"""Small Gradio chatbot for testing a local security gateway with Ollama.
 
-Protected mode is the default and sends requests through Aegis' OpenAI-compatible
-gateway. Direct Ollama mode is included only for local comparison/testing.
+Protected mode is the default and sends requests through the configured
+OpenAI-compatible security gateway. Direct Ollama mode is for local comparison.
 """
 
 from __future__ import annotations
@@ -14,12 +14,12 @@ import gradio as gr
 import httpx
 
 
-AEGIS_BASE_URL = os.getenv("AEGIS_BASE_URL", "http://127.0.0.1:8000/v1").rstrip("/")
-AEGIS_API_KEY = os.getenv("AEGIS_API_KEY", "").strip()
+GATEWAY_BASE_URL = os.getenv("GATEWAY_BASE_URL", "http://127.0.0.1:8000/v1").rstrip("/")
+GATEWAY_API_KEY = os.getenv("GATEWAY_API_KEY", "").strip()
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
 DEFAULT_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b-instruct")
 REQUEST_TIMEOUT = float(os.getenv("CHATBOT_TIMEOUT_SECONDS", "180"))
-MODES = ["Protected by Aegis", "Direct to Ollama (comparison only)"]
+MODES = ["Protected (via security gateway)", "Direct to Ollama (comparison only)"]
 
 
 def get_models() -> tuple[list[str], str]:
@@ -74,19 +74,17 @@ def reply(message: str, history: list[dict[str, Any]], mode: str, model: str, sy
     try:
         with httpx.Client(timeout=REQUEST_TIMEOUT, trust_env=False) as client:
             if mode == MODES[0]:
-                if not AEGIS_API_KEY:
+                if not GATEWAY_API_KEY:
                     return (
-                        "Protected mode needs an Aegis API key. Copy the key from **Connect an app** and set `AEGIS_API_KEY` as shown in the README.",
-                        "Aegis was not contacted; no request was sent to Ollama.",
+                        "Protected mode needs an API key. Set `GATEWAY_API_KEY` as shown in the README.",
+                        "The gateway was not contacted; the message was not sent to Ollama.",
                     )
                 response = client.post(
-                    f"{AEGIS_BASE_URL}/chat/completions",
-                    headers={"Authorization": f"Bearer {AEGIS_API_KEY}", "X-API-Key": AEGIS_API_KEY},
+                    f"{GATEWAY_BASE_URL}/chat/completions",
+                    headers={"Authorization": f"Bearer {GATEWAY_API_KEY}", "X-API-Key": GATEWAY_API_KEY},
                     json={"model": model, "messages": messages, "stream": False},
                 )
                 elapsed = round((time.perf_counter() - started) * 1000)
-                decision = response.headers.get("X-Aegis-Decision", "UNKNOWN").upper()
-                contacted = response.headers.get("X-Aegis-LLM-Contacted", "UNKNOWN").upper()
                 if response.status_code == 403:
                     try:
                         details = response.json()
@@ -94,19 +92,19 @@ def reply(message: str, history: list[dict[str, Any]], mode: str, model: str, sy
                         details = {}
                     blocked = details.get("blocked_details") or []
                     reasons = ", ".join(str(item.get("origin", "content")) for item in blocked if isinstance(item, dict))
-                    reason = f" Aegis flagged: {reasons}." if reasons else " Aegis policy held this message."
+                    reason = f" Review area: {reasons}." if reasons else " The message matched a security policy."
                     return (
-                        "**Held by Aegis.** This message was not sent to the model." + reason,
-                        f"Protected · BLOCK · model contacted: {contacted} · {elapsed} ms",
+                        "**Held by the security gateway.** This message was not sent to the model." + reason,
+                        f"Protected · BLOCK · model contacted: NO · {elapsed} ms",
                     )
                 if response.status_code in (401, 403):
-                    return "Aegis rejected the API key. Copy the current key from Connect an app and restart this example.", f"Protected · HTTP {response.status_code} · {elapsed} ms"
+                    return "The security gateway rejected the API key. Copy the current key from its application settings and restart this example.", f"Protected · HTTP {response.status_code} · {elapsed} ms"
                 if response.status_code == 503:
-                    return "Aegis has no model provider configured. In Connect an app, select Ollama, use the local provider URL, select a model, then save and test it.", f"Protected · provider unavailable · {elapsed} ms"
+                    return "No model provider is configured. In the security gateway's provider settings, select Ollama, enter its local URL and model, then save and test the connection.", f"Protected · provider unavailable · {elapsed} ms"
                 response.raise_for_status()
                 payload = response.json()
                 answer = payload.get("choices", [{}])[0].get("message", {}).get("content", "The model returned an empty response.")
-                return answer, f"Protected · {decision} · {model} · model contacted: {contacted} · {elapsed} ms"
+                return answer, f"Protected · ALLOW · {model} · model contacted: YES · {elapsed} ms"
 
             response = client.post(
                 f"{OLLAMA_BASE_URL}/api/chat",
@@ -122,7 +120,7 @@ def reply(message: str, history: list[dict[str, Any]], mode: str, model: str, sy
         text = exc.response.text[:500]
         return f"Request failed (HTTP {exc.response.status_code}). Check the model/provider configuration.\n\n{text}", f"HTTP {exc.response.status_code}"
     except httpx.HTTPError as exc:
-        target = AEGIS_BASE_URL if mode == MODES[0] else OLLAMA_BASE_URL
+        target = GATEWAY_BASE_URL if mode == MODES[0] else OLLAMA_BASE_URL
         return f"Could not connect to {target}: {exc}", "Connection failed"
     except (ValueError, IndexError, KeyError, TypeError) as exc:
         return f"The service returned an unexpected response: {exc}", "Response parsing failed"
@@ -142,8 +140,8 @@ def chat_submit(message: str, history: list[dict[str, Any]], mode: str, model: s
 models, ollama_status = get_models()
 initial_model = DEFAULT_MODEL if DEFAULT_MODEL in models else (models[0] if models else None)
 
-with gr.Blocks(title="Aegis + Ollama sample chatbot", theme=gr.themes.Soft()) as demo:
-    gr.Markdown("# Aegis + Ollama sample chatbot\nTry a local model through the Aegis firewall. Protected mode is selected by default.")
+with gr.Blocks(title="Local Ollama chatbot", theme=gr.themes.Soft()) as demo:
+    gr.Markdown("# Local Ollama chatbot\nChat with a model installed on this computer. Protected mode checks each message before it reaches the model.")
     with gr.Row():
         mode = gr.Radio(choices=MODES, value=MODES[0], label="Connection")
         model = gr.Dropdown(choices=models, value=initial_model, label="Installed Ollama model", allow_custom_value=True, scale=2)
@@ -160,7 +158,7 @@ with gr.Blocks(title="Aegis + Ollama sample chatbot", theme=gr.themes.Soft()) as
         prompt = gr.Textbox(placeholder="Ask a question…", label="Message", scale=8, lines=2)
         send = gr.Button("Send", variant="primary", scale=1)
         clear = gr.Button("Clear", scale=1)
-    telemetry = gr.Markdown("Protected mode sends messages through the Aegis gateway.")
+    telemetry = gr.Markdown("Protected mode inspects messages at the configured security gateway before forwarding them.")
 
     send.click(chat_submit, [prompt, chatbot, mode, model, system_prompt], [chatbot, telemetry]).then(lambda: "", outputs=prompt)
     prompt.submit(chat_submit, [prompt, chatbot, mode, model, system_prompt], [chatbot, telemetry]).then(lambda: "", outputs=prompt)
@@ -169,7 +167,7 @@ with gr.Blocks(title="Aegis + Ollama sample chatbot", theme=gr.themes.Soft()) as
 
 
 if __name__ == "__main__":
-    print(f"Aegis gateway: {AEGIS_BASE_URL}")
+    print(f"Security gateway: {GATEWAY_BASE_URL}")
     print(f"Ollama: {OLLAMA_BASE_URL}")
     print("Gradio UI: http://127.0.0.1:7860")
     demo.launch(server_name="127.0.0.1", server_port=int(os.getenv("GRADIO_SERVER_PORT", "7860")), share=False)
