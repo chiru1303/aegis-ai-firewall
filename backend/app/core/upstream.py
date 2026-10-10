@@ -17,11 +17,26 @@ def origin(url: str) -> str:
         raise HTTPException(400, "Provider must be an HTTP(S) URL without credentials or query parameters")
 
 
+# Default trusted origins for common providers in development or when not explicitly overridden
+DEFAULT_UPSTREAM_ORIGINS = [
+    "http://localhost:11434",
+    "http://127.0.0.1:11434",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "https://api.openai.com",
+    "https://api.anthropic.com",
+    "https://api.groq.com",
+]
+
+
 def validate_upstream(url: str, *, allow_configured: bool = True) -> str:
     target = origin(url)
     allowed = {origin(item) for item in settings.UPSTREAM_ALLOWED_ORIGINS}
     if allow_configured and settings.LLM_BASE_URL:
         allowed.add(origin(settings.LLM_BASE_URL))
+    # In development or if no explicit allowlist is configured, permit standard local and provider endpoints
+    if settings.ENVIRONMENT != "production" or not settings.UPSTREAM_ALLOWED_ORIGINS:
+        allowed.update({origin(item) for item in DEFAULT_UPSTREAM_ORIGINS})
     if target not in allowed:
         raise HTTPException(403, "Provider origin is not in the server allowlist")
     if settings.ENVIRONMENT == "production" and urlsplit(url).scheme != "https":

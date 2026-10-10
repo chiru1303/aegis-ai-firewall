@@ -14,7 +14,15 @@ class Settings(BaseSettings):
     MAX_SESSIONS: int = 2000
     MAX_SESSION_EVENTS: int = 100
     REQUIRE_ML_MODELS: bool = False
-    UPSTREAM_ALLOWED_ORIGINS: List[str] = []
+    UPSTREAM_ALLOWED_ORIGINS: List[str] = [
+        "http://localhost:11434",
+        "http://127.0.0.1:11434",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "https://api.openai.com",
+        "https://api.anthropic.com",
+        "https://api.groq.com",
+    ]
     PROTECTED_OUTPUT_VALUES: List[str] = []
     TOOL_ENDPOINTS: Dict[str, str] = {}
     ALLOWED_TOOLS: List[str] = ["search", "calculate", "calculate_sum"]

@@ -12,24 +12,27 @@ class IndirectInjectionDetector(BaseDetector):
     AI_DIRECTIVE_PATTERNS = [
         r"(?i)\b(?:note|instruction|notice|directive)\s+for\s+(?:the\s+)?(?:ai|assistant|llm|model|agent)\b",
         r"(?i)\bwhen\s+(?:summarizing|reading|processing|analyzing)\s+this\s+(?:document|page|email|code|text|image)\b",
+        r"(?i)\[?\b(?:ai|assistant|system)\s+(?:instruction|directive|command|prompt)\s*[:\]]",
         r"(?i)\b(?:ai|assistant|system)\s*:\s*(?:ignore|recommend|output|send|forward|execute|delete|say)\b",
         r"(?i)\bimportant\s+system\s+notice\s*:\s*all\s+previous\s+instructions\s+are\s+void\b",
         r"(?i)\bnew\s+protocol\s*:\s*share\s+all\s+confidential\s+data\b",
         r"(?i)\bauthorization\s*:\s*admin-override\b",
-        r"(?i)\bdisregard\s+(?:all\s+)?user\s+instructions\s+and\s+instead\b",
+        r"(?i)\bdisregard\s+(?:all\s+)?(?:user|prior|previous)\s+(?:instructions|directions)\b",
         r"(?i)\boutput\s*:\s*[\"']?i\s+have\s+been\s+compromised[\"']?\b",
     ]
 
     # 2. Exfiltration & Hijack Directives in Passive Data
     EXFILTRATION_PATTERNS = [
-        r"(?i)\b(?:send|forward|exfiltrat|upload|post)\s+(?:all\s+)?(?:conversation|chat|data|history|keys?|tokens?)\s+to\s+https?://",
+        r"(?i)\b(?:send|forward|exfiltrat\w*|upload|post)\s+(?:all\s+)?(?:conversation|chat|data|history|keys?|tokens?|user\s+context)\s+to\s+https?://",
         r"(?i)\b(?:include|append)\s+(?:the\s+)?system\s+prompt\s+in\s+the\s+(?:summary|response|email|search)\b",
         r"(?i)\bfetch\s+https?://[^\s]+\s+with\s+(?:the\s+)?(?:secret|key|password|prompt)\b",
+        r"(?i)\bexfiltrat\w*\s+(?:user\s+)?context\b",
     ]
 
     # 3. Code Comment & Markdown Injections
     CODE_MARKDOWN_PATTERNS = [
         r"(?i)(?:#|//|/\*|<!--)\s*(?:TODO|FIXME|NOTE)?\s*:?\s*(?:ai|assistant|system)\s*,\s*(?:ignore|override|recommend|backdoor|execute)\b",
+        r"(?i)<!--\s*\[?(?:ai|assistant|system|admin)?\s*(?:instruction|directive|override|command|prompt)?[:\]\s].*?-->",
         r"(?i)\[(?:web\s+page|tweet|image|bio|code\s+comment|hidden\s+text).*?(?:ignore|say\s+pwned|jailbreak|exploit|keys)\]",
         r"(?i)//\s*ai:\s*drop\s+tables",
     ]
@@ -40,7 +43,7 @@ class IndirectInjectionDetector(BaseDetector):
     ]
 
     def setup(self) -> None:
-        verb_pattern = r'(?i)\b(?:' + '|'.join(self.IMPERATIVE_VERBS) + r')\b\s+(?:previous|all|instructions|system|rules|guidelines|ai\s+instructions)'
+        verb_pattern = r'(?i)\b(?:' + '|'.join(self.IMPERATIVE_VERBS) + r')\b\s+(?:prior|previous|all|user)?\s*(?:directions|instructions|system|rules|guidelines|ai\s+instructions|context)'
         self.compiled_groups = {
             "ai_directive": [re.compile(p) for p in self.AI_DIRECTIVE_PATTERNS],
             "exfiltration": [re.compile(p) for p in self.EXFILTRATION_PATTERNS],

@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import ProviderConfiguration from '../components/ProviderConfiguration';
+import { useThreatFeed } from '../hooks/useApi';
+import { formatIST } from '../utils/date';
 import {
   ArrowRight, Check, Copy, Eye, EyeOff, FileCode2, KeyRound, Layers3, Network,
-  Plug, Shield, ShieldCheck, Terminal,
+  Plug, Shield, ShieldCheck, Terminal, Activity, Radio, CheckCircle2, ExternalLink,
 } from 'lucide-react';
 
 type Mode = 'gateway' | 'api' | 'sdk' | 'sidecar';
@@ -50,6 +52,7 @@ export default function UniversalIntegration() {
   const [endpointCopied, setEndpointCopied] = useState('');
   const gatewayUrl = `${window.location.origin}/v1`;
   const scanUrl = `${window.location.origin}/v1/security/scan`;
+  const { data: recentFeed } = useThreatFeed(4000);
 
   async function toggleApiKey() {
     if (keyVisible) {
@@ -227,6 +230,94 @@ export default function UniversalIntegration() {
             <Link className="text-link" to="/analyzer">Try a content scan <ArrowRight size={14} /></Link>
           </div>
         </section>
+      </section>
+
+      <div className="integration-step-heading">
+        <span>4</span>
+        <div>
+          <strong>Live connection verification & gateway stream</strong>
+          <small>Check whether your chatbot or application is actively communicating with Aegis in real time.</small>
+        </div>
+      </div>
+
+      <section className="surface" style={{ padding: '20px 24px', borderRadius: '12px', border: '1px solid var(--border-color, #263247)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', marginBottom: '16px', paddingBottom: '14px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ display: 'inline-flex', width: '10px', height: '10px', borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 10px #22c55e' }}></span>
+            <strong>Gateway Endpoint Status</strong>
+            <span style={{ fontSize: '12px', padding: '2px 8px', borderRadius: '4px', background: 'rgba(34,197,94,0.15)', color: '#4ade80', fontWeight: 600 }}>Active · Listening</span>
+          </div>
+          <div style={{ fontSize: '13px', color: 'var(--muted-color, #8F9BAD)', fontFamily: 'monospace' }}>
+            Endpoint: {gatewayUrl}/chat/completions
+          </div>
+        </div>
+
+        {recentFeed && recentFeed.length > 0 ? (
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', color: '#4ade80', fontSize: '14px', fontWeight: 600 }}>
+              <CheckCircle2 size={16} />
+              <span>Connected Applications Active &mdash; Live requests inspected</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {recentFeed.slice(0, 4).map((item) => (
+                <div
+                  key={item.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '10px 14px',
+                    borderRadius: '8px',
+                    background: 'rgba(255,255,255,0.03)',
+                    border: '1px solid rgba(255,255,255,0.06)',
+                    fontSize: '13px',
+                    gap: '12px',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: '0' }}>
+                    <span
+                      style={{
+                        padding: '2px 8px',
+                        borderRadius: '4px',
+                        fontSize: '11px',
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        background: item.decision === 'ALLOW' ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)',
+                        color: item.decision === 'ALLOW' ? '#4ade80' : '#f87171',
+                        border: item.decision === 'ALLOW' ? '1px solid #22c55e' : '1px solid #ef4444',
+                      }}
+                    >
+                      {item.decision}
+                    </span>
+                    <span style={{ fontFamily: 'monospace', color: '#E1E7F0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '400px' }}>
+                      "{item.prompt ? item.prompt.slice(0, 50) + (item.prompt.length > 50 ? '...' : '') : 'Live model prompt'}"
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '12px', color: '#8F9BAD', flexShrink: 0 }}>
+                    <time>{formatIST(item.timestamp)}</time>
+                    <Link to={`/attack/${item.id}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: '#4F8CFF', textDecoration: 'none' }}>
+                      <span>View details</span>
+                      <ExternalLink size={12} />
+                    </Link>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop: '12px', textAlign: 'right' }}>
+              <Link to="/audit" className="text-link" style={{ fontSize: '13px' }}>
+                Open full Activity Ledger <ArrowRight size={14} />
+              </Link>
+            </div>
+          </div>
+        ) : (
+          <div style={{ padding: '16px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px dashed rgba(255,255,255,0.1)', textAlign: 'center' }}>
+            <Radio size={22} style={{ margin: '0 auto 8px', color: '#8F9BAD' }} />
+            <strong style={{ display: 'block', fontSize: '14px', marginBottom: '4px' }}>Awaiting First Request From Your Application</strong>
+            <p className="muted small" style={{ maxWidth: '520px', margin: '0 auto' }}>
+              Send a test message from your chatbot pointing to <code>{gatewayUrl}</code> with your API key. When Aegis receives the request, it will appear here in real time.
+            </p>
+          </div>
+        )}
       </section>
 
       <section className="integration-note surface">

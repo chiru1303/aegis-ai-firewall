@@ -578,6 +578,8 @@ async def universal_scan_file_core(
     db: Optional[AsyncSession],
 ) -> ScanResponse:
     file_started = time.perf_counter()
+    if not session_id or session_id == "default":
+        session_id = f"session_file_{uuid.uuid4().hex[:8]}"
     # 1. Validate file size
     content_bytes = await file.read(settings.MAX_FILE_SIZE + 1)
     if len(content_bytes) > settings.MAX_FILE_SIZE:
@@ -988,11 +990,22 @@ async def health():
     except Exception:
         redis_status = "unavailable"
 
-    # Check models
+    # Check models - if any model has not been initialized yet, trigger its initialization
+    if not ensemble_classifier.wolf.is_loaded:
+        try:
+            await ensemble_classifier.wolf.initialize()
+        except Exception:
+            pass
+    if not ensemble_classifier.laya.is_loaded:
+        try:
+            await ensemble_classifier.laya.initialize()
+        except Exception:
+            pass
+
     models_status = {
-        "wolf_defender": "loaded · every scan" if ensemble_classifier.wolf.is_loaded else "not loaded · Tier 0 fallback",
+        "wolf_defender": "loaded · every scan" if ensemble_classifier.wolf.is_loaded else f"not loaded · Tier 0 fallback · {ensemble_classifier.wolf.load_error or 'weights missing'}",
         "deberta": "loaded · every scan" if ensemble_classifier.deberta.is_loaded else "not loaded · Tier 0 fallback",
-        "laya": "loaded · escalation" if ensemble_classifier.laya.is_loaded else "not loaded · deterministic fallback",
+        "laya": "loaded · escalation" if ensemble_classifier.laya.is_loaded else f"not loaded · deterministic fallback · {ensemble_classifier.laya.load_error or 'package not loaded'}",
         "open_jev": (
             "loaded · local model · escalation only"
             if ensemble_classifier.open_jev.is_loaded
@@ -1403,9 +1416,16 @@ async def get_audit_by_id(
             if not r:
                 raise HTTPException(status_code=404, detail="No audit records found in gateway log")
         else:
-            res = await db.execute(
-                select(AuditLogModel).where(AuditLogModel.request_id == record_id)
-            )
+            if record_id.isdigit():
+                res = await db.execute(
+                    select(AuditLogModel).where(
+                        (AuditLogModel.request_id == record_id) | (AuditLogModel.id == int(record_id))
+                    )
+                )
+            else:
+                res = await db.execute(
+                    select(AuditLogModel).where(AuditLogModel.request_id == record_id)
+                )
             r = res.scalar_one_or_none()
             if not r:
                 raise HTTPException(status_code=404, detail="Audit record not found")

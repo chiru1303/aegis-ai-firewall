@@ -45,6 +45,7 @@ npm-debug.log*
 # Models (except model configs if tracked)
 models/*
 !models/.keep
+backend/models/
 
 # Secrets
 .env

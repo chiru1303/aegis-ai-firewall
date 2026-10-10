@@ -138,12 +138,11 @@ class ToolFirewall:
                 return True, "SSRF attempt targeting internal or cloud metadata network blocked", 1.0, evidence
 
         # 4. SQL Injection Patterns
-        if tool_name in ['read_database', 'write_database', 'query']:
-            query_str = str(args.get('query') or args.get('sql') or '')
-            sqli_pattern = re.compile(r"(--|/\*|\bUNION\b\s+\bSELECT\b|'\s*OR\s*'1'='1'|\bDROP\b\s+\bTABLE\b|\bINSERT\b\s+\bINTO\b.*admin)", re.IGNORECASE)
-            if sqli_pattern.search(query_str):
-                evidence.append({"type": "SQL_INJECTION", "detail": "SQL injection pattern matched in database query argument"})
-                return True, "SQL injection signature detected in database arguments", 0.95, evidence
+        sqli_pattern = re.compile(r"(--|/\*|\bUNION\b\s+\bSELECT\b|'\s*OR\s*['\d]+=['\d]+|\bDROP\b\s+\bTABLE\b|\bINSERT\b\s+\bINTO\b|\bDELETE\b\s+\bFROM\b)", re.IGNORECASE)
+        if tool_name in ['read_database', 'write_database', 'query', 'sql', 'search'] or sqli_pattern.search(raw_args_str):
+            if sqli_pattern.search(raw_args_str):
+                evidence.append({"type": "SQL_INJECTION", "detail": "SQL injection pattern matched in tool arguments"})
+                return True, "SQL injection signature detected in tool arguments", 0.95, evidence
 
         # 5. Credential leakage inside arguments
         cred_pattern = re.compile(r'(AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{36}|xoxb-[0-9]{11}-[0-9]{11}|-----BEGIN PRIVATE KEY-----)')
